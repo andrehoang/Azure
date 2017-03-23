@@ -4,7 +4,7 @@
   "parameters": {   
     "adminUsername": {
       "type": "string",
-      "defaultValue" : "LordAndMaster",
+      "defaultValue" : "",
       "metadata": {
         "description": "Admin username on all VMs."
       }
