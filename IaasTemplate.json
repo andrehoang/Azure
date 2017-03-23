@@ -1,0 +1,237 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {   
+    "adminUsername": {
+      "type": "string",
+      "defaultValue" : "LordAndMaster",
+      "metadata": {
+        "description": "Admin username on all VMs."
+      }
+    },
+     "ExistingKeyVaultId": {
+      "type": "string",
+      "metadata": {
+        "description": "Where are the Secrets used by this template stored? E.g. /subscriptions/[Subscription ID]/resourceGroups/cloudydemos/providers/Microsoft.KeyVault/vaults/CloudySecrets"
+      }
+    },
+    "DeploymentVersion" : {
+        "type": "string",
+        "metadata": {
+            "description" : "What value shall we tag these resources with to indicate what version this is?"
+        },
+        "defaultValue": "[uniqueString(resourceGroup().id)]"
+    }
+  },
+  "variables": {
+    "virtualNetworkName": "[substring(uniqueString(resourceGroup().id),0,9)]",
+    "NetworkTemplateUri" :    "https://raw.githubusercontent.com/ahems/CloudyDemo/master/Templates/vnet.json",
+    "UpdateNetworkTemplateUri": "https://raw.githubusercontent.com/ahems/CloudyDemo/master/Templates/vnet-dnsupdate.json",
+    "DataTierTemplateUri" :   "https://raw.githubusercontent.com/ahems/CloudyDemo/master/Templates/DataTier.json",
+    "WebTierTemplateUri" :    "https://raw.githubusercontent.com/ahems/CloudyDemo/master/Templates/WebTier.json",
+    "MiddleTierTemplateUri" : "https://raw.githubusercontent.com/ahems/CloudyDemo/master/Templates/MiddleTier.json",
+    "SecurityTemplateUri" :   "https://raw.githubusercontent.com/ahems/CloudyDemo/master/Templates/SecurityTier.json",
+    "WAFTemplateUri" : "https://raw.githubusercontent.com/ahems/CloudyDemo/master/Templates/WAF.json"
+   },
+  "resources": [      
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[concat(uniqueString(resourceGroup().id),'diags')]",
+      "apiVersion": "2015-05-01-preview",
+      "location": "[resourceGroup().location]",
+      "tags": {
+				  "DeploymentVersion": "[parameters('DeploymentVersion')]",
+           "UniqueId" : "[uniqueString(resourceGroup().id)]"
+        },
+        "properties": {
+        "accountType": "Standard_LRS"        
+       }
+      },
+      { 
+     "apiVersion": "2015-01-01", 
+     "name": "VirtualNetwork", 
+     "type": "Microsoft.Resources/deployments", 
+     "properties": { 
+       "mode": "Incremental", 
+       "templateLink": {
+          "uri": "[variables('NetworkTemplateUri')]",
+          "contentVersion": "1.0.0.0"
+       }, 
+       "parameters": { 
+          "virtualNetworkName": { "value": "[variables('virtualNetworkName')]" },
+          "DeploymentVersion" : { "value": "[parameters('DeploymentVersion')]" }
+       } 
+     } 
+  },
+  { 
+     "apiVersion": "2015-01-01", 
+     "name": "UpdateVirtualNetwork", 
+     "type": "Microsoft.Resources/deployments",
+      "dependsOn": [
+        "Microsoft.Resources/deployments/SecurityTier",
+        "Microsoft.Resources/deployments/VirtualNetwork"
+        ], 
+     "properties": { 
+       "mode": "Incremental", 
+       "templateLink": {
+          "uri": "[variables('UpdateNetworkTemplateUri')]",
+          "contentVersion": "1.0.0.0"
+       }, 
+       "parameters": { 
+          "virtualNetworkName": { "value": "[variables('virtualNetworkName')]" }
+       } 
+     } 
+  },
+  {
+  "apiVersion": "2015-01-01", 
+     "name": "DataTier", 
+     "type": "Microsoft.Resources/deployments", 
+     "dependsOn": [
+        "Microsoft.Resources/deployments/SecurityTier",
+        "Microsoft.Resources/deployments/UpdateVirtualNetwork",
+        "[concat('Microsoft.Storage/storageAccounts/',uniqueString(resourceGroup().id),'diags')]"
+        ], 
+     "properties": { 
+       "mode": "Incremental", 
+       "templateLink": {
+          "uri": "[variables('DataTierTemplateUri')]",
+          "contentVersion": "1.0.0.0"
+       }, 
+       "parameters": { 
+          "existingVirtualNetworkId": {"value": "[resourceId('Microsoft.Network/virtualNetworks', variables('virtualNetworkName'))]" },
+          "sqlServerServiceAccountUserName" : {"value": "[parameters('adminUsername')]" },
+          "sqlServerServiceAccountPassword" : {
+            "reference": {
+              "keyVault": {
+                "id": "[parameters('ExistingKeyVaultId')]"
+                }, 
+                "secretName": "AdministratorPassword" 
+                }
+          },
+          "adminUsername": {"value": "[parameters('adminUsername')]" },
+          "adminPassword" : {
+            "reference": {
+              "keyVault": {
+                "id": "[parameters('ExistingKeyVaultId')]"
+                }, 
+                "secretName": "AdministratorPassword" 
+                }
+          }
+       } 
+     } 
+  },
+  {
+  "apiVersion": "2015-01-01", 
+     "name": "WAF", 
+     "type": "Microsoft.Resources/deployments", 
+     "dependsOn": [
+        "Microsoft.Resources/deployments/VirtualNetwork",
+        "[concat('Microsoft.Storage/storageAccounts/',uniqueString(resourceGroup().id),'diags')]"
+      ], 
+     "properties": { 
+       "mode": "Incremental", 
+       "templateLink": {
+          "uri": "[variables('WAFTemplateUri')]",
+          "contentVersion": "1.0.0.0"
+       }, 
+       "parameters": { 
+          "virtualNetworkName": { "value": "[variables('virtualNetworkName')]" }
+       }
+     }
+  },
+  {
+  "apiVersion": "2015-01-01", 
+     "name": "WebTier", 
+     "type": "Microsoft.Resources/deployments", 
+     "dependsOn": [
+        "Microsoft.Resources/deployments/VirtualNetwork",
+        "[concat('Microsoft.Storage/storageAccounts/',uniqueString(resourceGroup().id),'diags')]"
+      ], 
+     "properties": { 
+       "mode": "Incremental", 
+       "templateLink": {
+          "uri": "[variables('WebTierTemplateUri')]",
+          "contentVersion": "1.0.0.0"
+       }, 
+       "parameters": { 
+          "virtualNetworkName": { "value": "[variables('virtualNetworkName')]" },
+          "adminUsername" : {"value": "[parameters('adminUsername')]" },
+          "adminPassword"  : {
+            "reference": {
+              "keyVault": {
+                "id": "[parameters('ExistingKeyVaultId')]"
+                }, 
+                "secretName": "AdministratorPassword" 
+                }
+          },
+          "registrationKey" : {
+            "reference": {
+              "keyVault": {
+                "id": "[parameters('ExistingKeyVaultId')]"
+                }, 
+                "secretName": "AutomationAccountRegistrationKey" 
+                }
+          },
+          "registrationUrl" : {
+            "reference": {
+              "keyVault": {
+                "id": "[parameters('ExistingKeyVaultId')]"
+                }, 
+                "secretName": "AutomationAccountRegistrationUrl" 
+                }
+          },
+          "timestamp" : {"value": "[uniqueString(resourceGroup().id)]" },          
+          "DeploymentVersion" : { "value": "[parameters('DeploymentVersion')]" }
+        } 
+     } 
+  },
+  {
+  "apiVersion": "2015-01-01", 
+     "name": "MiddleTier", 
+     "type": "Microsoft.Resources/deployments", 
+     "dependsOn": [
+        "Microsoft.Resources/deployments/VirtualNetwork",
+        "[concat('Microsoft.Storage/storageAccounts/',uniqueString(resourceGroup().id),'diags')]"
+      ], 
+     "properties": { 
+       "mode": "Incremental", 
+       "templateLink": {
+          "uri": "[variables('MiddleTierTemplateUri')]",
+          "contentVersion": "1.0.0.0"
+       }, 
+       "parameters": { 
+          "virtualNetworkName": { "value": "[concat(resourceGroup().id, '/providers/Microsoft.Network/virtualNetworks/',variables('virtualNetworkName'))]" },
+          "DeploymentVersion" : { "value": "[parameters('DeploymentVersion')]" }
+       } 
+     } 
+  },
+    {
+  "apiVersion": "2015-01-01", 
+     "name": "SecurityTier", 
+     "type": "Microsoft.Resources/deployments", 
+     "dependsOn": [
+        "Microsoft.Resources/deployments/VirtualNetwork",
+        "[concat('Microsoft.Storage/storageAccounts/',uniqueString(resourceGroup().id),'diags')]"
+      ],
+     "properties": { 
+       "mode": "Incremental", 
+       "templateLink": {
+          "uri": "[variables('SecurityTemplateUri')]",
+          "contentVersion": "1.0.0.0"
+       }, 
+       "parameters": { 
+          "virtualNetworkName" : {"value" : "[variables('virtualNetworkName')]" },
+          "adminPassword"  : {
+            "reference": {
+              "keyVault": {
+                "id": "[parameters('ExistingKeyVaultId')]"
+                }, 
+                "secretName": "AdministratorPassword" 
+                }
+          },
+          "DeploymentVersion" : { "value": "[parameters('DeploymentVersion')]" }
+       } 
+     } 
+  }
+  ]
+}
